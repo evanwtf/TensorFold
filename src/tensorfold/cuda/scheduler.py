@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import queue
 import threading
+import time
 from typing import Any, Callable
 
 from .streams import Stream
@@ -23,6 +24,7 @@ class Scheduler:
         """Decode one request; ``emit`` runs on the calling thread and returns True to stop. Returns its stats."""
 
         box: queue.Queue = queue.Queue()
+        submitted = admitted = time.perf_counter()
         stream = Stream(list(prompt), max(1, count), sampling, draft=draft, stop_eos=stop_eos, vision=vision)
         cancel = [False]
         stream.emit = lambda new: (box.put(("tokens", new)), cancel[0])[1]
@@ -32,10 +34,12 @@ class Scheduler:
             if kind == "tokens":
                 if not cancel[0] and emit(value):
                     cancel[0] = True                 # the client left: the stream ends after its next round
+            elif kind == "admitted":
+                admitted = value
             elif kind == "error":
                 raise value
             else:
-                return value
+                return {**value, "queue_s": round(admitted - submitted, 4)}   # waiting for a slot
 
     def _admit(self, first=None) -> list[Stream]:
         done = []
@@ -48,6 +52,7 @@ class Scheduler:
                 except queue.Empty:
                     break
             self.boxes[id(stream)] = box
+            box.put(("admitted", time.perf_counter()))
             try:
                 self.decoder.admit(stream)
             except Exception as exc:                 # noqa: BLE001  (this request fails, the others go on)

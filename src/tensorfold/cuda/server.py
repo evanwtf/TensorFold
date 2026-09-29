@@ -26,6 +26,7 @@ from tensorfold.server.tool_policy import ToolCallPolicy
 from tensorfold.engine.call_gate import CallGate, call_format, generate_gated
 from tensorfold.server.tools import active_tool_specs, tool_choice_requires_call
 
+from tensorfold.cuda.metrics import Metrics, RequestClock, install
 from tensorfold.cuda.reply_text import StopStrings, StreamDecoder, hide_tool_calls, parse_tool_calls
 from tensorfold.server.text import split_thinking
 
@@ -84,6 +85,7 @@ class PreparedRequest:
     ignore_eos: bool = False
     stop: tuple[str, ...] = ()
     vision: Any = None
+    arrived: float | None = None     # perf_counter when the request was read, for the metrics' latencies
 
 
 def _native_context(model_dir: Path) -> int:
@@ -100,6 +102,7 @@ class App:
     """Serve one engine with sampling and reply-length defaults for requests that omit them."""
 
     reads_ignore_eos = False            # True where the engine reads ``ignore_eos`` itself; a ``stop_eos`` engine is given it
+    metrics: Metrics | None = None      # what /metrics exports; None records nothing
 
     def __init__(self, engine, model_dir: Path, served: str, *, default_thinking: bool = False,
                  sampling: dict[str, Any] | None = None, max_tokens: int = 4096,
@@ -119,6 +122,8 @@ class App:
         if self.context_window < 0:
             raise ValueError("context_window must be 0 or a positive token count")
         self.lock = threading.Lock()
+        self.metrics = Metrics(served)
+        install(self.metrics)              # the engine's drafted rounds report here
 
     def _check_fields(self, body: dict[str, Any]) -> str | None:
         import inspect
@@ -246,6 +251,7 @@ class App:
         return None
 
     def prepare(self, body: dict[str, Any], chat: bool) -> PreparedRequest:
+        arrived = time.perf_counter()
         problem = self._check_fields(body)
         if problem:
             raise RequestError(problem)
@@ -256,6 +262,7 @@ class App:
         limit = self._context_limit()
         if limit is not None:
             prepared.max_tokens = min(prepared.max_tokens, limit - len(prepared.prompt))
+        prepared.arrived = arrived
         return prepared
 
     def sampling_for(self, body: dict[str, Any], prompt: list[int]):
@@ -277,6 +284,20 @@ class App:
         """One reply; once ``cancelled()`` holds, a waiting request raises ``RequestCancelled`` unstarted, a running one stops at its next round and raises it after ``generate``."""
 
         prepared = prepared if prepared is not None else self.prepare(body, chat)
+        clock = RequestClock(self.metrics, prepared.arrived, len(prepared.prompt), prepared.max_tokens)
+        try:
+            result = self._run(body, chat, emit, prepared, cancelled, clock)
+        except RequestCancelled:
+            clock.finish("abort")
+            raise
+        except BaseException:
+            clock.finish("error")
+            raise
+        clock.finish("length" if result["finish"] == "length" else "stop")     # a tool call is a stop, as in vLLM
+        return result
+
+    def _run(self, body: dict[str, Any], chat: bool, emit: Callable[[dict[str, Any]], bool],
+             prepared: PreparedRequest, cancelled: Callable[[], bool] | None, clock: RequestClock) -> dict[str, Any]:
         prompt, max_tokens = prepared.prompt, prepared.max_tokens
         tools, thinking = prepared.tools, prepared.thinking
         policy = ToolCallPolicy(body)
@@ -308,6 +329,7 @@ class App:
             # True stops the engine after this round; engines that finish on both ranks keep calling and get True
             if stopped["client"] or stopped["stop"] or failed:
                 return True
+            clock.tokens(len(new))
             try:
                 if stops.strings:
                     kept = []
@@ -346,6 +368,7 @@ class App:
             options["stop_eos"] = not prepared.ignore_eos
 
         def generate(ids: list[int], count: int, feed: Callable[[list[int]], bool]) -> Any:
+            clock.prefill(len(ids))
             extra = dict(options)
             if prepared.vision is not None:          # a gate's continuation keeps the images, positions extended
                 from tensorfold.vision.qwen_processing import continued
@@ -356,10 +379,13 @@ class App:
             return self.engine.generate(ids, count, sampling, feed, **extra)
 
         # an engine that decodes concurrent requests together (``concurrent``) takes them as they come
+        clock.queued()
         with (nullcontext() if getattr(self.engine, "concurrent", False) else self.lock):
+            clock.scheduled()
             if cancelled is not None and cancelled():                # the client left while this request waited
                 raise RequestCancelled("the client left before the request started")
             stats = generate_gated(generate, prompt, max_tokens, gate, on_tokens)
+        clock.engine_returned(stats)
         if failed:
             raise failed[0]
         if stopped["client"]:                                        # as the Mac server: nothing more is written
@@ -461,6 +487,13 @@ def make_handler(app: App):
                 self._json(200, {"object": "list", "data": [{"id": app.served, "object": "model", "owned_by": "tensorfold"}]})
             elif self.path.rstrip("/") in ("/health", "/v1/health"):
                 self._json(200, {"ok": True})
+            elif self.path.split("?", 1)[0].rstrip("/") == "/metrics":
+                data = app.metrics.render(app.engine).encode() if app.metrics is not None else b""
+                self.send_response(200)
+                self.send_header("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
             else:
                 self._json(404, {"error": "not found"})
 
