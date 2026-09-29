@@ -6,6 +6,7 @@ import time
 
 import torch
 
+from tensorfold.cuda import metrics
 from tensorfold.engine.exact_sampling import Sampling
 
 from .decode import DecodeResult, DepthPolicy, Engine, _sync, absorb, draft
@@ -141,6 +142,7 @@ def auto_decode(e: Engine, drafter, pending: int, count: int, sampling: Sampling
         rounds += 1
         drafted += len(drafts)
         accepted += keep - 1
+        metrics.round(len(drafts), keep - 1)
         depths.append(len(drafts))
         keeps.append(keep)
         arms.append(arm)

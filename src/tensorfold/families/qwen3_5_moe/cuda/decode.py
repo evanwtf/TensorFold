@@ -9,6 +9,7 @@ from typing import Callable, Sequence
 import numpy as np
 import torch
 
+from tensorfold.cuda import metrics
 from tensorfold.cuda.sampling import sample_rows
 from tensorfold.cuda.streams import accept
 from tensorfold.engine.exact_sampling import MARGIN, Sampling, choose_rows
@@ -137,6 +138,7 @@ def mtp_decode(w, head: Head, st: State, mc: Cache, carry: Carry, pending: int, 
         out.extend(new)
         context.extend(new)
         rounds, drafted, kept = rounds + 1, drafted + len(guesses), kept + len(path) - 1
+        metrics.round(len(guesses), len(path) - 1)
         widths.append(len(tokens))
         if on_tokens is not None and on_tokens(new):
             break

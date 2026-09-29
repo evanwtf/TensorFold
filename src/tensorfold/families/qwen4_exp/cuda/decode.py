@@ -9,6 +9,7 @@ from typing import Sequence
 import numpy as np
 import torch
 
+from tensorfold.cuda import metrics
 from tensorfold.cuda.sampling import sample_rows
 from tensorfold.engine.exact_sampling import MARGIN, Sampling, choose_rows
 
@@ -362,6 +363,7 @@ def mtp_decode(e: Engine, pending: int, count: int, sampling: Sampling | None, *
         rounds += 1
         drafted += len(drafts)
         accepted += keep - 1
+        metrics.round(len(drafts), keep - 1)
         keeps.append(keep)
         widths.append(R)
         new = sampled[:keep][:max(0, count - len(out))]

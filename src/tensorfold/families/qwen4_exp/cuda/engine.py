@@ -195,6 +195,14 @@ class FlashNextEngine:
         return (body["prompt"], body["max_tokens"], None if s is None else Sampling(s[0], s[1], s[2], s[3]),
                 body["draft"], body["cached"])
 
+    def kv_usage(self) -> tuple[int, int]:
+        """Cache positions held: the live streams' of every slot's, or the one state's of its capacity."""
+
+        if self.multi is not None:
+            live = list(self.multi.streams.values())
+            return sum(s.st.pos for s in live if s.st is not None), self.scheduler.max_streams * self.max_len
+        return self.e.st.pos, self.max_len
+
     @property
     def context_window(self) -> int:
         """Prompt and reply capacity after reserving speculative scratch positions."""

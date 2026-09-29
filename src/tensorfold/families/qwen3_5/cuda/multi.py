@@ -6,6 +6,7 @@ import time
 
 import torch
 
+from tensorfold.cuda import metrics
 from tensorfold.cuda.markers import MIN_GAP
 from tensorfold.cuda.sampling import sample_streams
 from tensorfold.cuda.streams import PrefixCache, Stream, accept
@@ -218,6 +219,7 @@ class MultiDecoder:
         paths, ends = [], []
         for s, (tokens, parents), rows in zip(live, wins, sampled):
             path, end = accept(tokens, parents, rows, s.count - len(s.out), self._ends(s))
+            metrics.round(len(tokens) - 1, len(path) - 1, positions=max(_paths(parents)[0]))
             paths.append(path)
             ends.append(end)
         self._send([x for path in paths for x in (len(path), *path)])

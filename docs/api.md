@@ -6,6 +6,7 @@ The base URL is `http://127.0.0.1:8080/v1` with the default server settings.
 | --- | --- |
 | `GET /v1/models` | Served model ID; MLX also lists configured aliases |
 | `GET /health` | Server health and available status information |
+| `GET /metrics` | CUDA: Prometheus metrics under vLLM's names; see [Metrics](#metrics-cuda) |
 | `POST /v1/chat/completions` | Text chat, optional image input, tools and reasoning; streamed or non-streamed |
 | `POST /v1/completions` | Raw text without a chat template; MLX also accepts token IDs |
 
@@ -137,3 +138,42 @@ TensorFold also reports generation statistics such as decode rate, time to first
 For exactness comparisons, hold the checkpoint, template, runtime, prompt, seed and sampling settings
 constant, then compare the decoded reply with `draft` enabled and disabled. Repeat with fresh and reused
 prefixes, and compare each MLX concurrent request with its solo run.
+
+## Metrics (CUDA)
+
+`GET /metrics` returns Prometheus text (format 0.0.4). The families, units, bucket bounds and labels are vLLM's,
+with the prefix `tensorfold:` in place of `vllm:`: `vllm:time_to_first_token_seconds` is
+`tensorfold:time_to_first_token_seconds`. Every series carries `model_name`, the served name. The MLX server has no
+`/metrics`.
+
+| Family | Type | TensorFold meaning |
+| --- | --- | --- |
+| `num_requests_running`, `num_requests_waiting` | gauge | Requests past arrival and not finished; waiting ones are queued for the engine (for `App.lock`, or the `--parallel` scheduler's queue) |
+| `kv_cache_usage_perc` | gauge | Cache positions live requests hold over the positions the cache holds; 0 when nothing runs |
+| `prompt_tokens`, `prompt_tokens_by_source{source}`, `prompt_tokens_cached` | counter | Prompt tokens given to the engine, split into `local_compute` and `local_cache_hit` |
+| `prefix_cache_queries`, `prefix_cache_hits` | counter | Prompt tokens looked up, and those resumed from the prefix cache |
+| `generation_tokens` | counter | Tokens the engine produced for requests, counted as each round reaches the request |
+| `request_success{finished_reason}` | counter | Finished requests: `stop` (a tool call included, as in vLLM), `length`, `abort` (the client left) or `error` |
+| `spec_decode_num_drafts`, `spec_decode_num_draft_tokens`, `spec_decode_num_accepted_tokens` | counter | Drafted rounds, tokens proposed for verification, and tokens kept |
+| `spec_decode_num_accepted_tokens_per_pos{position}` | counter | Kept tokens by draft position, from 0; for a tree draft the position is the depth |
+| `time_to_first_token_seconds` | histogram | Arrival to the first generated token |
+| `inter_token_latency_seconds` | histogram | Between token deliveries; one sample a round, which can hold several drafted tokens |
+| `request_time_per_output_token_seconds` | histogram | Decode time over the generation tokens after the first |
+| `e2e_request_latency_seconds`, `request_queue_time_seconds`, `request_prefill_time_seconds`, `request_decode_time_seconds`, `request_inference_time_seconds` | histogram | Arrival to last token; arrival to the engine taking the request; then to the first token; first to last token; taken to last token |
+| `request_prompt_tokens`, `request_generation_tokens`, `request_max_num_generation_tokens`, `request_params_max_tokens`, `request_prefill_kv_computed_tokens` | histogram | Per request: prompt tokens, generation tokens (TensorFold serves n=1, so the maximum is the same), `max_tokens` after the context clamp, and prompt tokens prefilled without a cache hit |
+
+Arrival is when the server reads the request, before the chat template renders it. A tool-call gate's second pass
+through the engine counts its prompt again, as prefilled or resumed. A request whose engine raised counts in
+`request_success{finished_reason="error"}` only: its prompt counts are unknown and are not guessed.
+
+A family is left out, not exported as zero, where TensorFold cannot measure it:
+
+- The spec-decode families appear after the first drafted round.
+- `kv_cache_usage_perc` is absent for the 27B on one stream and for Qwen3.6-35B-A3B, whose cache state lives only
+  inside a request. Nemotron counts its attention positions; its Mamba state has a fixed size.
+- `num_preemptions`, `iteration_tokens_total`, `request_params_n`, `num_requests_waiting_by_reason` and
+  `finished_reason="repetition"` have no TensorFold counterpart: nothing is preempted, a round is not a batch step
+  outside `--parallel`, a reply is one sequence, requests wait for one reason, and no reply ends on repetition.
+
+The counts are host-side arithmetic under one lock, after each round's existing synchronization. They add no GPU
+work and do not change a reply: drafted replies still equal `"draft": false` ones.

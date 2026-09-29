@@ -7,6 +7,7 @@ import time
 import numpy as np
 import torch
 
+from tensorfold.cuda import metrics
 from tensorfold.cuda.sampling import sample_streams
 from tensorfold.cuda.streams import Stream, accept
 from tensorfold.engine.exact_sampling import MARGIN, choose_rows
@@ -145,6 +146,7 @@ class MultiDecoder:
         kept = []
         for s, (_, tokens), (st, a0, a1), rows in zip(live, windows, segs, sampled):
             path, end = accept(tokens, list(range(-1, len(tokens) - 1)), rows, s.count - len(s.out), self.eos)
+            metrics.round(len(tokens) - 1, len(path) - 1)
             commit(self.w, st, self.buf, a1 - a0, len(path), at=a0)
             s.committed.extend(tokens[:len(path)])
             s.counted(len(tokens))

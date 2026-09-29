@@ -125,10 +125,11 @@ class Metrics:
         usage = usage() if usage is not None else None
         lines = []
         with self.lock:
-            gauges = {"num_requests_waiting": self.waiting + queued,
-                      "num_requests_running": max(0, self.running - self.waiting - queued)}
+            running = max(0, self.running - self.waiting - queued)
+            gauges = {"num_requests_waiting": self.waiting + queued, "num_requests_running": running}
             if usage is not None and usage[1] > 0:
-                gauges["kv_cache_usage_perc"] = min(1.0, usage[0] / usage[1])
+                # with nothing running, a serialized engine's state is a finished reply's: kept for reuse, not in use
+                gauges["kv_cache_usage_perc"] = min(1.0, usage[0] / usage[1]) if running else 0.0
             for name, kind, text, _ in _FAMILIES:
                 series = {"": gauges[name]} if name in gauges else self.values[name]
                 if not series:

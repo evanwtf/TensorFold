@@ -116,9 +116,21 @@ def test_kv_usage_is_read_from_the_engine_at_scrape_time():
 
     engine = Engine()
     m = Metrics("m")
+    m.running = 1                                             # a request is decoding
     assert samples(m.render(engine))['tensorfold:kv_cache_usage_perc{model_name="m"}'] == 0.25
     engine.used = 500
     assert samples(m.render(engine))['tensorfold:kv_cache_usage_perc{model_name="m"}'] == 0.5
+
+
+def test_an_idle_engine_state_is_kept_for_reuse_not_in_use():
+    class Engine:
+        def kv_usage(self):
+            return 700, 1000                                  # the last reply's state, kept as a prefix entry
+
+    m = Metrics("m")
+    assert samples(m.render(Engine()))['tensorfold:kv_cache_usage_perc{model_name="m"}'] == 0
+    m.running = m.waiting = 1                                 # waiting is not running either
+    assert samples(m.render(Engine()))['tensorfold:kv_cache_usage_perc{model_name="m"}'] == 0
 
 
 def test_an_engine_without_kv_usage_or_capacity_exports_no_kv_series():

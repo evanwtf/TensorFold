@@ -170,6 +170,15 @@ class Qwen27Engine:
 
         return not (stops and len(prompt) - stops[-1] < MIN_GAP)
 
+    def kv_usage(self) -> tuple[int, int] | None:
+        """Cache positions the live streams hold, of all streams'; None on one stream, whose state ``generate`` holds."""
+
+        if self.multi is None or self.scheduler is None or not self.multi.context:
+            return None
+        live = list(self.multi.streams.values()) + list(self.multi.filling)
+        return (sum(s.st.pos for s in live if s.st is not None),
+                self.scheduler.max_streams * self.multi.context)
+
     def generate(self, prompt: list[int], max_tokens: int, sampling, on_tokens: Callable[[list[int]], bool | None],
                  draft: bool = True, stop_eos: bool = True, *, vision=None):
         """``draft=False``: serial decoding from a fresh prefill, no drafts, copies or kept states; ``stop_eos=False``: past end tokens (``ignore_eos``)."""

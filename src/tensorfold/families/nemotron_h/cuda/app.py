@@ -161,6 +161,11 @@ class NemotronEngine:
         self.cache = [c for c in self.cache if c[0] != ids][-1:] + [(ids, snap)]
 
     # -- decoding ------------------------------------------------------------------------------------------------
+    def kv_usage(self) -> tuple[int, int]:
+        """Attention cache positions held, of its rows (the Mamba layers' state is a fixed size)."""
+
+        return self.e.pos, self.max_len
+
     @property
     def context_window(self) -> int:
         """Prompt and reply capacity: the cache rows less one verify window."""

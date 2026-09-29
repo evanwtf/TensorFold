@@ -410,6 +410,11 @@ class GlmEngine:
             stats["stages_ms"] = {k: round(v * 1e3, 1) for k, v in res.stages.items()}
         return stats
 
+    def kv_usage(self) -> tuple[int, int]:
+        """Cache positions held, of the positions the cache holds."""
+
+        return self.e.st.pos, self.capacity_plan["cache_slots"]
+
     def generate(self, prompt: list[int], max_tokens: int, sampling, on_tokens, draft: bool = True) -> dict[str, Any]:
         """Mirror one rank-0 request on rank 1; draft=False uses serial decoding and fresh prefill as the reference drafted replies must equal."""
 

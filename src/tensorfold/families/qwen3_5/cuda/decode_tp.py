@@ -13,6 +13,7 @@ from tensorfold.engine.exact_sampling import MARGIN, Sampling, choose_rows
 
 from .decode import CopyIndex, DecodeResult, clone_state
 from .forward import State, _paths, commit, tree_forward
+from tensorfold.cuda import metrics
 from tensorfold.cuda.sampling import sample_rows
 from .weights import Weights
 
@@ -248,6 +249,7 @@ def decode_tp(w: Weights, st: State, prompt: Sequence[int], pending: int, count:
             rounds += 1
             drafted_rows += len(window) - 1
             accepted += len(path) - 1
+            metrics.round(len(window) - 1, len(path) - 1, positions=max(depths))
             widths.append(len(window))
             if on_tokens is not None:
                 stopped = bool(on_tokens(new))

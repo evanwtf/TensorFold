@@ -11,6 +11,7 @@ import torch
 from tensorfold.engine.exact_sampling import Sampling
 
 from .forward import State, _paths, commit, tree_forward
+from tensorfold.cuda import metrics
 from tensorfold.cuda.sampling import sample_rows
 from .weights import Weights
 
@@ -267,6 +268,7 @@ def draft_decode(w: Weights, st: State, prompt: Sequence[int], pending: int,
         rounds += 1
         drafted_rows += len(guesses)
         accepted_drafts += len(path) - 1
+        metrics.round(len(guesses), len(path) - 1, positions=max(depths))
         widths.append(len(tokens))
         if on_tokens is not None:
             stopped = bool(on_tokens([tokens[row] for row in path[1:]] + [terminal]))

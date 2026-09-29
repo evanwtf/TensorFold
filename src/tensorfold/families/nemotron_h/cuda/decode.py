@@ -8,6 +8,7 @@ from typing import Callable, Sequence
 
 import torch
 
+from tensorfold.cuda import metrics
 from tensorfold.engine.exact_sampling import Sampling
 
 from .engine import Engine
@@ -189,6 +190,7 @@ def draft_decode(eng: Engine, mtp: MTPHead, pre: Prefilled, count: int, sampling
         res.rounds += 1
         res.drafted += len(proposal)
         res.accepted += accepted
+        metrics.round(len(proposal), accepted)
         res.widths.append(1 + len(proposal))
         if len(out) < count and not (stop_eos and out[-1] in eos):
             # queue the next round's drafts before handing tokens over, so the caller's work overlaps the head's graph

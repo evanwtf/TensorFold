@@ -9,6 +9,7 @@ from typing import Sequence
 import numpy as np
 import torch
 
+from tensorfold.cuda import metrics
 from tensorfold.engine.exact_sampling import MARGIN, Sampling, choose_rows
 
 from . import glue, prof, qmm
@@ -447,6 +448,7 @@ def mtp_decode(e: Engine, pending: int, count: int, sampling: Sampling | None, *
         rounds += 1
         drafted += len(drafts)
         accepted += keep - 1
+        metrics.round(len(drafts), keep - 1)
         depths.append(len(drafts))
         keeps.append(keep)
         out.extend(sampled[:keep])
@@ -504,6 +506,7 @@ def dflash_decode(e: Engine, drafter, pending: int, count: int, sampling: Sampli
         rounds += 1
         drafted += len(drafts)
         accepted += keep - 1
+        metrics.round(len(drafts), keep - 1)
         depths.append(len(drafts))
         keeps.append(keep)
         out.extend(sampled[:keep])
